@@ -1,0 +1,5 @@
+Chai and Code
+
+PORT=3000
+MONGODB_URL="mongodb+srv://talha:talha123@cluster0.qjdufha.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
+CORS_ORIGIN=*
