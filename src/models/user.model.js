@@ -18,7 +18,19 @@ const userSchema = new mongoose.Schema({
     },
     password: {
         type: String,
-        required: [true, "Password is required"]
+        required: function () {
+            return !this.via_google;  // Make password required only if not signed up via Google
+        },
+        minlength: 8,
+        select: false,
+    },
+    email_verified: {
+        type: Boolean,
+        default: false,
+    },
+    via_google: {
+        type: Boolean,
+        default: false
     },
     refreshToken: {
         type: String

@@ -5,9 +5,9 @@ import sendMail from "../utils/SendMail.js";
 import jwt from "jsonwebtoken";
 import crypto from 'crypto';
 
+// Helper functions....
 
-
-// Helper function to generate tokens
+// To generate tokens
 const generateAccessAndRefreshTokens = async (userId) => {
     try {
         const user = await User.findById(userId);
@@ -24,7 +24,9 @@ const generateAccessAndRefreshTokens = async (userId) => {
     }
 };
 
-//Register Function
+// Route functions....
+
+// Register Function
 const registerUser = asyncHandler(async (req, res) => {
     const { fullName, email, password } = req.body;
 
@@ -57,30 +59,28 @@ const registerUser = asyncHandler(async (req, res) => {
     );
 });
 
-//Login Function
+// Login Function
 const loginUser = asyncHandler(async (req, res) => {
     const { email, password } = req.body;
 
-    // const email = "talha.kh18@gmail.com"
-    // const password = "talhakhawaja"
-
-    if (!email || !password) {
+    if (!email || !password)
         return res.status(400).json({ message: 'Email and password are required' });
-    }
 
     const user = await User.findOne({ email });
 
-    if (!user) {
+    if (!user)
         return res.status(404).json({ message: 'User does not exist' });
-        
+
+    if (!user.email_verified)
+        return res.status(402).json({ message: 'User is not verified' });
+
+    let isPasswordValid = false
+    if (!user.via_google) {
+        isPasswordValid = await user.isPasswordCorrect(password);
     }
 
-    const isPasswordValid = await user.isPasswordCorrect(password);
-
-    if (!isPasswordValid) {
+    if (!isPasswordValid)
         return res.status(401).json({ message: 'Invalid user credentials' });
-        
-    }
 
     const { accessToken, refreshToken } = await generateAccessAndRefreshTokens(user._id);
 
@@ -101,7 +101,7 @@ const loginUser = asyncHandler(async (req, res) => {
         );
 });
 
-//Logout Function
+// Logout Function
 const logoutUser = asyncHandler(async (req, res) => {
     await User.findByIdAndUpdate(
         req.user._id,
@@ -121,9 +121,87 @@ const logoutUser = asyncHandler(async (req, res) => {
         .json({ status: 200, data: {}, message: "User logged out" });
 });
 
-//forgot password
-const forgotPassword = asyncHandler(async (req, res) => {
-    const { email } = req.body;
+const googleSignup = asyncHandler(async (req, res) => {
+    const { email, name } = req.googleUser;
+
+    try {
+
+        // Check if user already exists
+        let existedUser = await User.findOne({ email });
+
+        if (existedUser) {
+            return res.status(400).json({ message: 'User with this email already exists.' });
+        }
+
+        // Create a new user
+        const user = await User.create({
+            fullName: name,
+            email,
+            email_verified: true, // Assuming the email is verified by Google
+            via_google: true
+        });
+
+        const createdUser = await User.findById(user._id).select('-password -refreshToken');
+
+        if (!createdUser) {
+            return res.status(500).json({ message: 'User registration failed' });
+        }
+
+        // Respond to the client
+        return res.status(201).json({
+            status: 201,
+            data: createdUser,
+            message: "User registered successfully"
+        });
+
+    } catch (error) {
+        console.error('Error during Google sign-up:', error);
+        return res.status(400).json({ message: 'Google sign-up failed', error: error.message });
+    }
+});
+
+const googleSignin = asyncHandler(async (req, res) => {
+    const { email, name } = req.googleUser;
+
+    try {
+
+        let user = await User.findOne({ email });
+
+        if (!user) {
+            user = await User.create({
+                fullName: name,
+                email,
+                email_verified: true,
+                via_google: true
+            });
+        }
+
+        const { accessToken, refreshToken } = await generateAccessAndRefreshTokens(user._id);
+
+        const loggedInUser = await User.findById(user._id).select(" -refreshToken");
+
+        const options = {
+            httpOnly: false,
+            secure: process.env.NODE_ENV,
+        };
+
+        return res
+            .status(200)
+            .cookie("accessToken", accessToken, options)
+            .cookie("refreshToken", refreshToken, options)
+            .json(
+                { status: 200, data: { user: loggedInUser, accessToken, refreshToken }, message: "User logged in successfully" }
+            );
+
+    } catch (error) {
+        console.error('Google sign-in error:', error);
+        res.status(400).json({ message: 'Google sign-in failed' });
+    }
+});
+
+// send code 
+const sendOTP = asyncHandler(async (req, res) => {
+    const { email, action } = req.body;
 
     try {
         const user = await User.findOne({ email });
@@ -133,21 +211,23 @@ const forgotPassword = asyncHandler(async (req, res) => {
 
         const otp = crypto.randomInt(10000, 100000).toString();
         const token = jwt.sign({ email, otp }, process.env.ACCESS_TOKEN_SECRET, { expiresIn: '5m' });
-        
+
         await sendMail(
             user.email,
             'Password Reset',
-            `You are receiving this email because you have requested to reset your password. Please use the following OTP to reset your password: ${otp}.`
+            action === 'forgot' ?
+                `You are receiving this email because you have requested to reset your password. Please use the following OTP to reset your password: ${otp}.` :
+                `Please complete your account verification by using the following OTP: ${otp}.`
         );
 
         const options = {
             httpOnly: true,
             secure: process.env.NODE_ENV
         }
-        
+
         res
             .status(200)
-            .cookie('resetToken', token, options)
+            .cookie('verificationToken', token, options)
             .json({ message: 'OTP has been sent to your email.' });
 
     } catch (error) {
@@ -155,10 +235,10 @@ const forgotPassword = asyncHandler(async (req, res) => {
     }
 });
 
-//verify otp
+// Verify otp
 const verifyOtp = asyncHandler(async (req, res) => {
     const { otp } = req.body;
-    const token = req.cookies.resetToken;
+    const token = req.cookies.verificationToken;
 
     if (!token) {
         return res.status(400).json({ message: 'No token provided' });
@@ -179,24 +259,59 @@ const verifyOtp = asyncHandler(async (req, res) => {
 // Reset password
 const resetPassword = asyncHandler(async (req, res) => {
     const { password, email } = req.body;
-  
+    const token = req.cookies.verificationToken;
+
+    if (!token) {
+        return res.status(400).json({ message: 'No token provided' });
+    }
+
     try {
 
-      const user = await User.findOne({email});
+        const decoded = jwt.verify(token, process.env.ACCESS_TOKEN_SECRET);
+        if (decoded.email !== email)
+            return res.status(400).json({ message: 'unauth email' });
 
-      if (!user) {
-        return res.status(404).json({ message: 'User not found' });
-      }
-  
-      user.password = password;
-  
-      await user.save();
-  
-      res.status(200).json({ message: 'Password updated successfully' });
+        const user = await User.findOne({ email });
+
+        if (!user)
+            return res.status(404).json({ message: 'User not found' });
+
+        user.password = password;
+
+        await user.save();
+
+        res.status(200).json({ message: 'Password updated successfully' });
     } catch (error) {
-      res.status(400).json({ message: 'error while updating' });
+        res.status(400).json({ message: 'error while updating' });
     }
-  });
+});
+
+// Change Current password
+const changeCurrentPassword = asyncHandler(async (req, res) => {
+    const { oldPassword, newPassword } = req.body;
+
+    const user = await User.findById(req.user?._id);
+
+    const isPasswordCorrect = await user.isPasswordCorrect(oldPassword);
+    if (!isPasswordCorrect)
+        res.status(400).json({ message: 'Invalid Current password' });
+
+
+
+    user.password = newPassword;
+    await user.save({ validateBeforeSave: false });
+
+    return res
+        .status(200)
+        .json({ status: 200, data: {}, message: "Password changed successfully" });
+});
+
+// Get Current User
+const getCurrentUser = asyncHandler(async (req, res) => {
+    return res
+        .status(200)
+        .json({ status: 200, data: req.user, message: "User fetched successfully" });
+});
 
 const refreshAccessToken = asyncHandler(async (req, res) => {
     const incomingRefreshToken = req.cookies.refreshToken || req.body.refreshToken;
@@ -240,58 +355,58 @@ const refreshAccessToken = asyncHandler(async (req, res) => {
     }
 });
 
-const changeCurrentPassword = asyncHandler(async (req, res) => {
-    const { oldPassword, newPassword } = req.body;
+// To Verify Email Account 
+const verifyAccount = asyncHandler(async (req, res) => {
+    try {
+        const { email } = req.body;
+        const token = req.cookies.verificationToken;
 
-    const user = await User.findById(req.user?._id);
-    const isPasswordCorrect = await user.isPasswordCorrect(oldPassword);
+        if (!email) {
+            return res.status(400).json({ message: 'Email is required' });
+        }
 
-    if (!isPasswordCorrect) {
-        throw new ApiError(400, "Invalid old password");
+        if (!token) {
+            return res.status(400).json({ message: 'No token provided' });
+        }
+
+        // Verify the token
+        const decoded = jwt.verify(token, process.env.ACCESS_TOKEN_SECRET);
+        if (decoded.email !== email) {
+            return res.status(400).json({ message: 'Unauthorized email' });
+        }
+
+        // Update the user's email verification status
+        const user = await User.findOneAndUpdate(
+            { email },
+            { $set: { email_verified: true } },
+            { new: true } // Return the updated user
+        );
+
+        if (!user) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+
+        return res.status(200).json({ status: 200, message: "Account verified successfully" });
+    } catch (error) {
+        // Handle errors
+        console.error('Error verifying account:', error);
+        return res.status(500).json({ message: 'An error occurred while verifying the account' });
     }
-
-    user.password = newPassword;
-    await user.save({ validateBeforeSave: false });
-
-    return res
-        .status(200)
-        .json({ status: 200, data: {}, message: "Password changed successfully" });
 });
 
-const getCurrentUser = asyncHandler(async (req, res) => {
-    return res
-        .status(200)
-        .json({ status: 200, data: req.user, message: "User fetched successfully" });
-});
-
-const updateAccountDetails = asyncHandler(async (req, res) => {
-    const { fullName, email } = req.body;
-
-    if (!fullName || !email) {
-        throw new ApiError(400, "All fields are required");
-    }
-
-    const user = await User.findByIdAndUpdate(
-        req.user?._id,
-        { $set: { fullName, email } },
-        { new: true }
-    ).select("-password");
-
-    return res
-        .status(200)
-        .json({ status: 200, data: user, message: "Account details updated successfully" });
-});
 
 //Exporting functions
 export {
     registerUser,
     loginUser,
     logoutUser,
+    googleSignup,
+    googleSignin,
     refreshAccessToken,
     changeCurrentPassword,
     getCurrentUser,
-    updateAccountDetails,
-    forgotPassword,
+    verifyAccount,
+    sendOTP,
     verifyOtp,
     resetPassword
 };
