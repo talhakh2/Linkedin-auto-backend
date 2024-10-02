@@ -221,7 +221,7 @@ const restartCampaignsOnServerStart = asyncHandler(async () => {
             if (commentCampaign) {
                 campaignDetails = {
                     campaign_id: commentCampaign._id,
-                    account_id: 'HuHnWG2vSwicMoYZhVNTvg',
+                    account_id: 'S8ogIYcpR8Om5W7UKggREw',
                     posts: commentCampaign.posts,
                 };
                 type = "Commenting";
