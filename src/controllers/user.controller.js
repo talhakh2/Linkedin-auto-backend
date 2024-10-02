@@ -66,7 +66,8 @@ const loginUser = asyncHandler(async (req, res) => {
     if (!email || !password)
         return res.status(400).json({ message: 'Email and password are required' });
 
-    const user = await User.findOne({ email });
+    const user = await User.findOne({ email }).select("+password");
+
 
     if (!user)
         return res.status(404).json({ message: 'User does not exist' });
@@ -289,14 +290,13 @@ const resetPassword = asyncHandler(async (req, res) => {
 // Change Current password
 const changeCurrentPassword = asyncHandler(async (req, res) => {
     const { oldPassword, newPassword } = req.body;
+    console.log(oldPassword, newPassword );
 
-    const user = await User.findById(req.user?._id);
+    const user = await User.findById(req.user?._id).select("+password");
 
     const isPasswordCorrect = await user.isPasswordCorrect(oldPassword);
     if (!isPasswordCorrect)
         res.status(400).json({ message: 'Invalid Current password' });
-
-
 
     user.password = newPassword;
     await user.save({ validateBeforeSave: false });

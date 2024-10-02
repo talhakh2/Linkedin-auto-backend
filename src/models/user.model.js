@@ -32,6 +32,18 @@ const userSchema = new mongoose.Schema({
         type: Boolean,
         default: false
     },
+    plan: {
+        type: String,
+        default: 'Free'
+    },
+    planExpiryDate: { 
+        type: Date,
+        default: null 
+    },
+    stripeCustomerId: {
+        type: String,  // Field for storing Stripe Customer ID
+        default: null
+    },
     refreshToken: {
         type: String
     }
@@ -68,6 +80,5 @@ userSchema.methods.generateRefreshToken = function () {
         expiresIn: process.env.REFRESH_TOKEN_EXPIRY
     });
 };
-
 
 export const User = mongoose.model("User", userSchema);
